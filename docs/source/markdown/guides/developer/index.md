@@ -42,4 +42,5 @@ Learn the release process and guidelines.
 ./contributing
 ./code_review_checklist
 ./release_guidelines
+./visualization_rfc
 ```
