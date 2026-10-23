@@ -28,7 +28,8 @@ To ensure compatibility with your hardware, you can specify a backend during ins
 
 ```{literalinclude} ../../../../examples/cli/00_installation/uv_install.sh
 :language: bash
-:lines: 10-30
+:start-at: uv pip install anomalib
+:end-at: uv pip install "anomalib[openvino,cu130]"
 ```
 
 **Using `pip`:**

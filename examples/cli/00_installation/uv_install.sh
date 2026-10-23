@@ -4,7 +4,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Install uv if you haven't already
-curl -LsSf https://astral.sh/uv/install.sh | sh
+(
+    installer=$(mktemp) || exit 1
+    trap 'rm -f "$installer"' EXIT
+    curl -LsSf https://github.com/astral-sh/uv/releases/download/0.9.18/uv-installer.sh -o "$installer" || exit 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        echo "e27424708d1ac59cfc94e3f540a111f2edbb37bc8164febce8ee7fa5d5505c71  $installer" | sha256sum -c - || exit 1
+    else
+        echo "e27424708d1ac59cfc94e3f540a111f2edbb37bc8164febce8ee7fa5d5505c71  $installer" | shasum -a 256 -c - || exit 1
+    fi
+    sh "$installer"
+) || exit 1
 
 # Quick install (uses default PyTorch from PyPI)
 uv pip install anomalib

@@ -99,17 +99,17 @@ jobs:
           path: |
             ~/.cache/pip
             .venv
-          key: ${{ runner.os }}-pip-${{ github.event_name }}-${{ github.ref_name }}-${{ hashFiles('**/pyproject.toml') }}-${{ hashFiles('**/uv.lock') }}
+          key: ${{ runner.os }}-pip-${{ github.event_name }}-${{ github.ref_name }}-${{ hashFiles('**/pyproject.toml') }}-${{ hashFiles('**/uv.lock') }}-${{ hashFiles('.github/requirements/*.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-${{ github.event_name }}-${{ github.ref_name }}-
       - name: Build package
         run: |
-          python -m pip install --upgrade pip==26.0.1 build==1.4.2
+          python -m pip install --require-hashes --upgrade -r .github/requirements/build.txt
           python -m build
       - name: Verify package
         if: inputs.verify-package
         run: |
-          python -m pip install twine==7.0.0
+          python -m pip install --require-hashes -r .github/requirements/twine.txt
           twine check dist/*
       - name: Set artifact name
         id: set-artifact-name
