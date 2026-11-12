@@ -29,6 +29,7 @@ Available Models:
     - :class:`Cflow`: Conditional Normalizing Flow
     - :class:`CFM`: Crossmodal Feature Mapping
     - :class:`Csflow`: Conditional Split Flow
+    - :class:`Destseg`: Segmentation-Guided Denoising Student-Teacher
     - :class:`Dfkde`: Deep Feature Kernel Density Estimation
     - :class:`Dfm`: Deep Feature Modeling
     - :class:`Dinomaly`: DinoV2-based Reconstruction Error Model
@@ -62,6 +63,7 @@ from .cfa import Cfa
 from .cflow import Cflow
 from .cfm import CFM
 from .csflow import Csflow
+from .destseg import Destseg
 from .dfkde import Dfkde
 from .dfm import Dfm
 from .dinomaly import Dinomaly
@@ -97,6 +99,7 @@ __all__ = [
     "Cflow",
     "CFM",
     "Csflow",
+    "Destseg",
     "Dfkde",
     "Dfm",
     "Dinomaly",

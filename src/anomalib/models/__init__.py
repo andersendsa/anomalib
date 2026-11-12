@@ -26,6 +26,7 @@ Image Models:
     - Cflow (:class:`anomalib.models.image.Cflow`)
     - CFM (:class:`anomalib.models.image.CFM`)
     - CSFlow (:class:`anomalib.models.image.Csflow`)
+    - DeSTSeg (:class:`anomalib.models.image.Destseg`)
     - DFKDE (:class:`anomalib.models.image.Dfkde`)
     - DFM (:class:`anomalib.models.image.Dfm`)
     - Dinomaly (:class:`anomalib.models.image.Dinomaly`)
@@ -75,6 +76,7 @@ from .image import (
     Cfa,
     Cflow,
     Csflow,
+    Destseg,
     Dfkde,
     Dfm,
     Dinomaly,
@@ -125,6 +127,7 @@ __all__ = [
     "Cfa",
     "Cflow",
     "Csflow",
+    "Destseg",
     "Dfkde",
     "Dfm",
     "Dinomaly",
