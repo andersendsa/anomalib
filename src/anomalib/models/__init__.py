@@ -50,6 +50,7 @@ Image Models:
     - SuperADD (:class:`anomalib.models.image.SuperADD`)
     - UFlow (:class:`anomalib.models.image.Uflow`)
     - UniNet (:class:`anomalib.models.image.UniNet`)
+    - VerdictAD (:class:`anomalib.models.image.VerdictAD`)
     - VLM-AD (:class:`anomalib.models.image.VlmAd`)
     - WinCLIP (:class:`anomalib.models.image.WinClip`)
 
@@ -101,6 +102,7 @@ from .image import (
     Supersimplenet,
     Uflow,
     UniNet,
+    VerdictAD,
     VlmAd,
     WinClip,
 )
@@ -154,6 +156,7 @@ __all__ = [
     "Supersimplenet",
     "Uflow",
     "UniNet",
+    "VerdictAD",
     "VlmAd",
     "WinClip",
 ]
