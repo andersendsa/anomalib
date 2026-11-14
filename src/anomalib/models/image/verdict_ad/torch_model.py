@@ -3,6 +3,8 @@
 
 """AnomalyDINO with VerdictAD's decision-guided refinement."""
 
+from collections.abc import Callable
+
 import torch
 from torch import nn
 from torchvision.transforms.v2 import functional as F  # noqa: N812
@@ -49,6 +51,13 @@ class VerdictADModel(DynamicBufferMixin, nn.Module):
         self.register_buffer("reference_images", torch.empty(0))
         self.reference_images: torch.Tensor
 
+    def _apply(self, fn: Callable[[torch.Tensor], torch.Tensor], recurse: bool = True) -> "VerdictADModel":
+        """Propagate device and dtype changes to weights kept outside checkpoints."""
+        super()._apply(fn, recurse=recurse)
+        if recurse and self.decider._model is not None:  # noqa: SLF001
+            self.decider._model._apply(fn)  # noqa: SLF001
+        return self
+
     @torch.no_grad()
     def forward(self, images: torch.Tensor) -> torch.Tensor | InferenceBatch:
         """Collect normal references in training; refine predictions in evaluation.
@@ -66,9 +75,16 @@ class VerdictADModel(DynamicBufferMixin, nn.Module):
         if images.ndim != 4 or images.shape[1] != 3 or images.numel() == 0:
             msg = "Expected a nonempty RGB image batch (B, 3, H, W)."
             raise ValueError(msg)
-        if not images.is_floating_point() or not torch.isfinite(images).all() or images.min() < 0 or images.max() > 1:
+        # Bilinear resizing can overshoot [0, 1] by a few float32 ULPs.
+        if (
+            not images.is_floating_point()
+            or not torch.isfinite(images).all()
+            or images.min() < -1e-6
+            or images.max() > 1 + 1e-6
+        ):
             msg = "VerdictAD expects finite RGB floats in [0, 1]; do not apply external normalization."
             raise ValueError(msg)
+        images = images.clamp(0, 1)
         if self.training:
             remaining = self.n_shots - len(self.reference_images)
             if remaining > 0:
@@ -87,9 +103,16 @@ class VerdictADModel(DynamicBufferMixin, nn.Module):
             return predictions
         references = [F.to_pil_image(image.cpu()) for image in self.reference_images]
         decisions = torch.stack([
-            self.decider.predict(F.to_pil_image(image.cpu()), references, images.device) for image in images
+            self.decider.predict(
+                F.to_pil_image(image.cpu()),
+                references,
+                images.device,
+                include_local=self.gamma > 0,
+            )
+            for image in images
         ])
-        return refine_predictions(predictions, decisions[:, :2], decisions[:, 2:], BOXES * 2, self.alpha, self.gamma)
+        boxes = BOXES * 2 if self.gamma > 0 else []
+        return refine_predictions(predictions, decisions[:, :2], decisions[:, 2:], boxes, self.alpha, self.gamma)
 
     @torch.no_grad()
     def fit(self) -> None:

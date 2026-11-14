@@ -122,7 +122,9 @@ They replace pretrained feature extraction and decision inference; they do not
 establish detection accuracy or reproduce the paper's results.
 
 For an ablation, use identical references and set `alpha=0`, `gamma=0` to recover
-the detector outputs without loading Clef-Flash. Changing refinement requires
+the detector outputs without loading Clef-Flash. Setting only `gamma=0` skips all
+32 local decisions and runs only the two global decisions per query image.
+Changing refinement requires
 recalibrating thresholds. The upstream implementation reports decision batches
 of four fitting on a 24 GB GPU; the combined detector also consumes memory.
 This 9B decision model is intended for accuracy-oriented inspection and adds

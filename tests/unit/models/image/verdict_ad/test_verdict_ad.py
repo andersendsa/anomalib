@@ -77,6 +77,21 @@ def test_disabled_refinement_and_extreme_logits() -> None:
     assert torch.equal(result.anomaly_map[1], predictions.anomaly_map[1])
 
 
+def test_refinement_preserves_small_probabilities() -> None:
+    """Apply fractional powers before rounding small sigmoid probabilities to zero."""
+    predictions = InferenceBatch(pred_score=torch.ones(1), anomaly_map=torch.ones(1, 1, 7, 11))
+    result = refine_predictions(
+        predictions,
+        torch.full((1, 2), -100.0),
+        torch.full((1, 32), -100.0),
+        BOXES * 2,
+    )
+    expected_score = torch.tensor(-50.0).exp().expand_as(result.pred_score)
+    expected_map = torch.tensor(-25.0).exp().expand_as(result.anomaly_map)
+    torch.testing.assert_close(result.pred_score, expected_score, atol=0, rtol=1e-6)
+    torch.testing.assert_close(result.anomaly_map, expected_map, atol=0, rtol=1e-6)
+
+
 @pytest.mark.parametrize("failure", ["negative", "nan", "shape", "uncovered", "box", "exponent"])
 def test_invalid_refinement_inputs(failure: str) -> None:
     """Reject invalid evidence instead of silently corrupting anomaly scores."""
@@ -124,7 +139,8 @@ def test_decision_views(shots: int) -> None:
         decision_records(references[0], [])
 
 
-def test_decider_option_order_and_batching(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("include_local", [False, True])
+def test_decider_option_order_and_batching(monkeypatch: pytest.MonkeyPatch, include_local: bool) -> None:
     """Interpret option IDs, not assumed logit positions, including the final partial batch."""
     decider = ClefFlash(batch_size=3)
     sizes = []
@@ -145,10 +161,15 @@ def test_decider_option_order_and_batching(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(decider, "_model", model)
     monkeypatch.setattr(decider, "_load", lambda _device: None)
+    if not include_local:
+        monkeypatch.setattr(
+            "anomalib.models.image.verdict_ad.decider._crop",
+            Mock(side_effect=AssertionError("Disabled local refinement must not build crops")),
+        )
     image = Image.new("RGB", (14, 14))
-    logits = decider.predict(image, [image], torch.device("cpu"))
-    assert torch.equal(logits, torch.full((34,), 2.0))
-    assert sizes == [3] * 11 + [1]
+    logits = decider.predict(image, [image], torch.device("cpu"), include_local=include_local)
+    assert torch.equal(logits, torch.full((34 if include_local else 2,), 2.0))
+    assert sizes == ([3] * 11 + [1] if include_local else [2])
 
 
 @pytest.mark.parametrize("name", ["VerdictAD", "verdict_ad", "verdict_a_d"])
@@ -205,6 +226,48 @@ def test_training_validation_and_disabled_backend(monkeypatch: pytest.MonkeyPatc
         model.training_step(batch)
 
 
+def test_disabled_local_refinement(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Global-only inference requests two decisions and preserves the detector map."""
+    model = VerdictADModel(n_shots=1, gamma=0)
+    images = torch.rand(2, 3, 28, 28)
+    model(images[:1])
+    model.fit()
+    model.eval()
+    backend = Mock(return_value=torch.zeros(2))
+    monkeypatch.setattr(model.decider, "predict", backend)
+    result = model(images)
+    assert backend.call_count == 2
+    assert backend.call_args.kwargs == {"include_local": False}
+    model.alpha = 0
+    baseline = model(images)
+    torch.testing.assert_close(result.pred_score, baseline.pred_score * 0.5**0.5)
+    assert torch.equal(result.anomaly_map, baseline.anomaly_map)
+
+
+def test_external_weights_follow_parent_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Move external parameters and buffers without adding them to checkpoints."""
+    model = VerdictADModel(n_shots=1)
+    loader = Mock(side_effect=AssertionError("Device moves must not load Clef-Flash"))
+    monkeypatch.setattr(model.decider, "_load", loader)
+    model.cpu()
+    state_keys = set(model.state_dict())
+    external = nn.Sequential(nn.Linear(2, 2))
+    external.register_buffer("cache", torch.ones(2))
+    monkeypatch.setattr(model.decider, "_model", external)
+    apply = Mock(wraps=external._apply)  # noqa: SLF001
+    monkeypatch.setattr(external, "_apply", apply)
+    assert model.cpu() is model
+    apply.assert_called_once()
+    model.to(dtype=torch.float64)
+    assert all(value.dtype == torch.float64 for value in external.state_dict().values())
+    model.to("meta")
+    assert all(value.device.type == "meta" for value in external.state_dict().values())
+    model.to_empty(device="cpu")
+    assert all(value.device.type == "cpu" for value in external.state_dict().values())
+    assert set(model.state_dict()) == state_keys
+    loader.assert_not_called()
+
+
 def test_reference_and_input_errors() -> None:
     """Fail clearly on missing references, invalid RGB input, and missing releases."""
     model = VerdictADModel(n_shots=2)
@@ -228,6 +291,28 @@ def test_preprocessor_preserves_rgb_range() -> None:
     assert output.max() <= 1
 
 
+def test_default_resize_roundoff_is_accepted() -> None:
+    """A valid white image survives default resizing, training, and inference."""
+    model = VerdictAD(n_shots=1, alpha=0, gamma=0, visualizer=False)
+    batch = ImageBatch(image=torch.ones(1, 3, 1024, 1024), gt_label=[0])
+    model.pre_processor.on_train_batch_start(None, model, batch, 0)
+    resized = batch.image.clone()
+    model.training_step(batch)
+    assert model.model.reference_images.min() >= 0
+    assert model.model.reference_images.max() <= 1
+    assert torch.equal(batch.image, resized)
+    model.on_train_epoch_end()
+    model.eval()
+    assert torch.isfinite(model.validation_step(batch).pred_score).all()
+
+
+@pytest.mark.parametrize("value", [-1e-3, 1.001, float("nan"), float("inf")])
+def test_roundoff_tolerance_rejects_invalid_input(value: float) -> None:
+    """Clamping must not silently accept invalid ranges or nonfinite pixels."""
+    with pytest.raises(ValueError, match="normalization"):
+        VerdictADModel(n_shots=1)(torch.full((1, 3, 28, 28), value))
+
+
 @pytest.mark.parametrize("method", ["to_torch", "to_onnx", "to_openvino"])
 def test_export_rejected(method: str, tmp_path: Path) -> None:
     """Reject unsupported exports before producing an incomplete artifact."""
@@ -239,7 +324,11 @@ def test_export_rejected(method: str, tmp_path: Path) -> None:
 
 def test_lightning_calibration_and_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Calibrate on refined predictions and restore references through a real checkpoint."""
-    monkeypatch.setattr(ClefFlash, "predict", lambda _self, _image, _refs, device: torch.zeros(34, device=device))
+    monkeypatch.setattr(
+        ClefFlash,
+        "predict",
+        lambda _self, _image, _refs, device, **_kwargs: torch.zeros(34, device=device),
+    )
     model = VerdictAD(n_shots=1, alpha=1, gamma=1, pre_processor=False, evaluator=False, visualizer=False)
     train = DataLoader([ImageBatch(image=torch.rand(1, 3, 28, 28), gt_label=[0])], batch_size=None)
     validation_images = torch.rand(2, 3, 28, 28)

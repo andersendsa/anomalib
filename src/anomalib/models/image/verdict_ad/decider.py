@@ -62,12 +62,18 @@ def _crop(image: Image.Image, box: tuple[float, float, float, float]) -> Image.I
     return image.crop((int(box[0] * width), int(box[1] * height), int(box[2] * width), int(box[3] * height)))
 
 
-def decision_records(image: Image.Image, references: list[Image.Image]) -> list[tuple[str, list[Image.Image], str]]:
-    """Build the two global, sixteen crop and sixteen boxed-view queries.
+def decision_records(
+    image: Image.Image,
+    references: list[Image.Image],
+    *,
+    include_local: bool = True,
+) -> list[tuple[str, list[Image.Image], str]]:
+    """Build two global queries and optionally sixteen crop and sixteen boxed queries.
 
     Args:
         image (Image.Image): RGB query image.
         references (list[Image.Image]): One to four normal RGB reference images.
+        include_local (bool): Whether to build crop and boxed-view queries.
 
     Returns:
         list[tuple[str, list[Image.Image], str]]: Task, images and binary question per decision.
@@ -83,16 +89,17 @@ def decision_records(image: Image.Image, references: list[Image.Image]) -> list[
         ("Inspect this industrial product photo.", [_resize(image, 896)], Q_FREE),
         (task, [_resize(image, 896), _mosaic(references, 896)], Q_REF),
     ]
-    records.extend(
-        (task, [_resize(_crop(image, box), 448), _mosaic([_crop(r, box) for r in references], 448)], Q_CROP)
-        for box in BOXES
-    )
-    reference_grid = _mosaic(references, 448)
-    for box in BOXES:
-        query = _resize(image, 448)
-        coordinates = (int(box[0] * 448), int(box[1] * 448), int(box[2] * 448) - 1, int(box[3] * 448) - 1)
-        ImageDraw.Draw(query).rectangle(coordinates, outline=(255, 0, 0), width=4)
-        records.append((task, [query, reference_grid], Q_BOX))
+    if include_local:
+        records.extend(
+            (task, [_resize(_crop(image, box), 448), _mosaic([_crop(r, box) for r in references], 448)], Q_CROP)
+            for box in BOXES
+        )
+        reference_grid = _mosaic(references, 448)
+        for box in BOXES:
+            query = _resize(image, 448)
+            coordinates = (int(box[0] * 448), int(box[1] * 448), int(box[2] * 448) - 1, int(box[3] * 448) - 1)
+            ImageDraw.Draw(query).rectangle(coordinates, outline=(255, 0, 0), width=4)
+            records.append((task, [query, reference_grid], Q_BOX))
     return records
 
 
@@ -150,18 +157,27 @@ class ClefFlash:
         self._release, self._model, self._processor = release, model.eval(), processor
 
     @torch.inference_mode()
-    def predict(self, image: Image.Image, references: list[Image.Image], device: torch.device) -> torch.Tensor:
-        """Return 34 true-minus-false decision logits in global/crop/box order.
+    def predict(
+        self,
+        image: Image.Image,
+        references: list[Image.Image],
+        device: torch.device,
+        *,
+        include_local: bool = True,
+    ) -> torch.Tensor:
+        """Return true-minus-false decision logits in global/crop/box order.
 
         Args:
             image (Image.Image): Query image.
             references (list[Image.Image]): Normal reference images.
             device (torch.device): Device on which to run the decision model.
+            include_local (bool): Whether to run the 32 local decisions.
 
         Returns:
-            torch.Tensor: Float32 logits of shape ``(34,)`` on ``device``.
+            torch.Tensor: Float32 logits on ``device``, shape ``(34,)`` when
+                including local decisions or ``(2,)`` for global decisions only.
         """
-        records = decision_records(image, references)
+        records = decision_records(image, references, include_local=include_local)
         self._load(device)
         if self._release is None or self._model is None or self._processor is None:
             msg = "Clef-Flash did not initialize its model and processor."
