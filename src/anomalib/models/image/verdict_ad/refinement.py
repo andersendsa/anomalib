@@ -9,6 +9,7 @@ Adapted from https://github.com/sgstq0811/VerdictAD-Jev-AD (Apache-2.0).
 import math
 
 import torch
+from torch.nn import functional as F  # noqa: N812
 
 from anomalib.data import InferenceBatch
 
@@ -67,14 +68,16 @@ def refine_predictions(
         raise ValueError(msg)
     refined_scores = scores
     if alpha:
-        gate = global_logits.to(device=scores.device, dtype=torch.float32).mean(dim=1).sigmoid().pow(alpha)
+        logits = global_logits.to(device=scores.device, dtype=torch.float32).mean(dim=1)
+        gate = (F.logsigmoid(logits) * alpha).exp()
         refined_scores = scores * gate.to(scores.dtype)
     refined_maps = maps
     if gamma:
         height, width = maps.shape[-2:]
         weights = torch.zeros((batch_size, height, width), device=maps.device, dtype=torch.float32)
         counts = torch.zeros((height, width), device=maps.device, dtype=torch.float32)
-        probabilities = window_logits.to(device=maps.device, dtype=torch.float32).sigmoid().pow(gamma)
+        logits = window_logits.to(device=maps.device, dtype=torch.float32)
+        probabilities = (F.logsigmoid(logits) * gamma).exp()
         for index, (x0, y0, x1, y1) in enumerate(boxes):
             if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
                 msg = "Boxes must have normalized, ordered XYXY coordinates."
