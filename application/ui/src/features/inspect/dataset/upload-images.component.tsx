@@ -17,6 +17,8 @@ export const UploadImages = () => {
     const { startUpload, incrementProgress } = useUploadStatus();
 
     const captureImageMutation = $api.useMutation('post', '/api/projects/{project_id}/images', {
+        // Send one upload at a time to avoid overwhelming forwarded connections.
+        scope: { id: 'dataset-image-upload' },
         onSuccess: () => incrementProgress(true),
         onError: () => incrementProgress(false),
     });
@@ -55,14 +57,16 @@ export const UploadImages = () => {
     };
 
     const captureImages = (files: FileList | null) => {
-        if (files === null) return;
+        if (!files?.length || captureImageMutation.isPending) return;
 
         handleAddMediaItem(Array.from(files));
     };
 
     return (
         <FileTrigger allowsMultiple onSelect={captureImages}>
-            <Button variant='secondary'>Upload images</Button>
+            <Button variant='secondary' isDisabled={captureImageMutation.isPending}>
+                Upload images
+            </Button>
         </FileTrigger>
     );
 };
